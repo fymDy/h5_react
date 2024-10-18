@@ -1,0 +1,6 @@
+/* src/components/IconSvg/IconSvg.css */
+.icon-svg {
+    display: inline-block;
+    vertical-align: middle;
+    fill: currentColor;
+}

@@ -1,94 +1,113 @@
-// scripts/svgServer.js
-const express = require('express');
+const chokidar = require('chokidar');
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
+const SVGSpriter = require('svg-sprite');
 
-const app = express();
+// 设置路径
+const rawAssetsDir = path.join(__dirname, '..', 'rawAssets'); // rawAssets 目录
+const outputDir = path.join(__dirname, '..', 'src', 'components', 'IconSvg'); // 输出目录
+const outputSpritePath = path.join(outputDir, 'svgSprite.svg'); // 雪碧图输出路径
+const outputTypeDefPath = path.join(outputDir, 'iconTypes.ts'); // TypeScript 类型定义输出路径
 
-// 设置 rawAssets 目录路径
-const rawAssetsDir = path.join(__dirname, '..', 'rawAssets'); // 上一级目录
+// 如果输出目录不存在，创建它
+if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+}
 
-// 定义路由
-app.get('/', (req, res) => {
+// 生成 SVG 雪碧图的函数
+function generateSprite() {
+    console.log('开始生成新的雪碧图...');
+
+    // 创建 SVG Spriter 实例
+    const spriter = new SVGSpriter({
+        mode: {
+            symbol: {
+                sprite: "svgSprite.svg", // 生成的雪碧图文件名
+            }
+        }
+    });
+
+    const iconIds = []; // 用于收集所有图标 ID
+
+    // 读取 SVG 文件
     fs.readdir(rawAssetsDir, (err, files) => {
         if (err) {
-            return res.status(500).send('读取目录失败: ' + err.message);
+            console.error('读取目录失败:', err);
+            return;
         }
 
-        // 过滤出 SVG 文件
-        const svgContent = files
-            .filter(file => path.extname(file) === '.svg')
-            .map(file => {
-                const filePath = path.join(rawAssetsDir, file);
-                const data = fs.readFileSync(filePath, 'utf8'); // 直接同步读取文件
-                return `<div class="svg-container">
-                            <div class="svg-content">${data}</div>
-                            <h3>${file}</h3>
-                        </div>`;
-            })
-            .join('');
+        // 过滤并处理所有 SVG 文件
+        files.filter(file => path.extname(file) === '.svg').forEach(file => {
+            const filePath = path.join(rawAssetsDir, file);
+            const fileContent = fs.readFileSync(filePath, 'utf-8');
 
-        const htmlContent = `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>SVG Viewer</title>
-            <style>
-                body {
-                    font-family: Arial, sans-serif;
-                }
-                .wrap {
-                    display: flex;
-                    flex-wrap: wrap; /* 允许换行 */
-                    justify-content: flex-start; /* 从左到右排列 */
-                    align-items: flex-start; /* 从上到下排列 */
-                }
-                .svg-container {
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    margin: 20px; /* 每个 SVG 的间距 */
-                }
-                .svg-content {
-                    width: 100px; /* 设置宽度 */
-                    height: 100px; /* 设置高度 */
-                }
-                svg {
-                    width: 100%; /* 适应容器宽度 */
-                    height: 100%; /* 适应容器高度 */
-                }
-            </style>
-        </head>
-        <body>
-            <h1>SVG Viewer</h1>
-            <section class='wrap'> 
-                ${svgContent}
-            </section>
-        </body>
-        </html>
-        `;
+            const iconId = path.basename(file, '.svg'); // 获取图标 ID（去掉 .svg 后缀）
+            iconIds.push(iconId); // 添加到图标 ID 列表中
 
-        res.send(htmlContent);
+            // 将 SVG 文件添加到 Spriter 中
+            spriter.add(filePath, null, fileContent);
+        });
+
+        // 编译生成雪碧图
+        spriter.compile((error, result) => {
+            if (error) {
+                console.error('生成雪碧图失败:', error);
+            } else {
+                // 保存生成的雪碧图
+                fs.writeFileSync(outputSpritePath, result.symbol.sprite.contents);
+                console.log('SVG 雪碧图已生成:', outputSpritePath);
+
+                // 生成 TypeScript 类型定义
+                const typeDefContent = `export type IconName = ${iconIds.map(id => `'${id}'`).join(' | ')};\n`;
+                fs.writeFileSync(outputTypeDefPath, typeDefContent, 'utf8');
+                console.log('TypeScript 类型定义已生成:', outputTypeDefPath);
+            }
+        });
     });
-});
+}
 
-// 启动服务器
-const PORT = 3030;
-app.listen(PORT, () => {
-    console.log(`服务器正在运行，访问 http://localhost:${PORT} 查看 SVG 文件`);
+// 批量处理变动文件
+let changeQueue = new Set();
+let debounceTimeout;
+const DEBOUNCE_DELAY = 1000;
 
-    // 根据操作系统选择打开方式
-    const platform = process.platform;
-    const url = `http://localhost:${PORT}`;
-    
-    if (platform === 'win32') {
-        exec(`start ${url}`); // Windows
-    } else if (platform === 'darwin') {
-        exec(`open ${url}`); // macOS
-    } else {
-        exec(`xdg-open ${url}`); // Linux
+// 使用 chokidar 监听 rawAssets 目录的变化
+const watcher = chokidar.watch(rawAssetsDir, {
+    ignored: /(^|[\/\\])\../, // 忽略隐藏文件
+    persistent: true,
+    ignoreInitial: false,
+    awaitWriteFinish: {
+        stabilityThreshold: 100,
+        pollInterval: 100
     }
 });
+
+// 监听文件的添加、修改和删除事件
+watcher
+    .on('add', (filePath) => {
+        console.log(`文件已添加: ${filePath}`);
+        queueChange(filePath);
+    })
+    .on('change', (filePath) => {
+        console.log(`文件已修改: ${filePath}`);
+        queueChange(filePath);
+    })
+    .on('unlink', (filePath) => {
+        console.log(`文件已删除: ${filePath}`);
+        queueChange(filePath);
+    });
+
+console.log(`正在监听 ${rawAssetsDir} 目录中的文件变化...`);
+
+// 将变动的文件添加到队列并延迟生成雪碧图
+function queueChange(filePath) {
+    changeQueue.add(filePath);  // 将文件路径加入变动队列
+    clearTimeout(debounceTimeout);  // 清除上一次的定时器
+
+    // 延迟处理队列中的变动
+    debounceTimeout = setTimeout(() => {
+        console.log('处理变动文件:', Array.from(changeQueue));
+        generateSprite();  // 生成雪碧图
+        changeQueue.clear();  // 清空队列
+    }, DEBOUNCE_DELAY);
+}
