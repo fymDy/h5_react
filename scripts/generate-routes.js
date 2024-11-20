@@ -3,7 +3,7 @@ const path = require('path');
 
 // 定义 views 目录的路径和 router.tsx 文件的路径
 const viewsDir = path.join(__dirname, '../src/views');
-const outputRouterFile = path.join(__dirname, '../src/router/routers.tsx');
+const outputRouterFile = path.join(__dirname, '../src/router/routes.tsx');
 
 // 清空路由文件内容
 function clearRouterFile(filePath) {
